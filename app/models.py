@@ -5,6 +5,7 @@ from app.storage import (
     load_all, save_all, find_one, find_many, insert, update, delete, get_next_number
 )
 from datetime import datetime
+import uuid
 
 
 # ============== CONSTANTS ==============
@@ -762,3 +763,303 @@ def get_demand_analysis_report(start_date, end_date, days_forecast):
     report.sort(key=lambda x: x["card_type_name"])
     
     return report, period_days
+
+
+# ============== CARD SEARCH REPORT ==============
+def get_card_search_report(card_number=None, owner_name=None):
+    """
+    Report: Поиск карты по номеру или ФИО владельца.
+    Возвращает информацию о картах, найденных по частичному совпадению номера карты
+    или частичному совпадению ФИО владельца.
+    
+    Для каждой найденной карты возвращается:
+    - Номер карты
+    - ФИО владельца (или заявителя)
+    - Вид карты
+    - Статус карты
+    - Документы, в которых фигурирует данная карта
+    """
+    cards = load_all("cards")
+    owners = {o["id"]: o for o in get_owners()}
+    applicants = {a["id"]: a for a in get_applicants()}
+    card_types = {ct["id"]: ct for ct in get_card_types()}
+    
+    # Build document index by card number
+    all_docs = load_all("documents")
+    card_docs_index = {}
+    for doc in all_docs:
+        for line in doc.get("lines", []):
+            card_num = line.get("card_number")
+            if card_num:
+                if card_num not in card_docs_index:
+                    card_docs_index[card_num] = []
+                card_docs_index[card_num].append({
+                    "doc_date": doc.get("doc_date", ""),
+                    "doc_number": doc.get("doc_number", ""),
+                    "doc_type": DOCUMENT_TYPES.get(doc.get("doc_type"), doc.get("doc_type")),
+                    "status": doc.get("status", "")
+                })
+    
+    # Sort history for each card by date descending
+    for card_num in card_docs_index:
+        card_docs_index[card_num].sort(key=lambda x: x.get("doc_date", ""), reverse=True)
+    
+    # Filter cards by search criteria
+    results = []
+    for card in cards:
+        card_num = card.get("card_number", "")
+        owner_id = card.get("owner_id", "")
+        applicant_id = card.get("applicant_id", "")
+        card_type_id = card.get("card_type_id", "")
+        status = card.get("status", "")
+        
+        # Get owner/applicant name
+        owner_name_val = ""
+        if owner_id and owner_id in owners:
+            owner_name_val = owners[owner_id].get("full_name", "")
+        elif applicant_id and applicant_id in applicants:
+            owner_name_val = applicants[applicant_id].get("full_name", "")
+        
+        # Check if card matches search criteria
+        match = False
+        if card_number and card_number.strip():
+            if card_number.strip().lower() in card_num.lower():
+                match = True
+        if owner_name and owner_name.strip():
+            if owner_name.strip().lower() in owner_name_val.lower():
+                match = True
+        
+        # If no search criteria provided, don't return anything
+        if not card_number and not owner_name:
+            continue
+            
+        if match:
+            # Get card type name
+            ct_name = ""
+            if card_type_id and card_type_id in card_types:
+                ct_name = card_types[card_type_id].get("name", "")
+            
+            # Get status description
+            status_desc = CARD_STATUSES.get(status, status)
+            
+            # Get documents for this card
+            docs = card_docs_index.get(card_num, [])
+            
+            results.append({
+                "card_number": card_num,
+                "owner_name": owner_name_val,
+                "card_type": ct_name,
+                "status": status_desc,
+                "status_code": status,
+                "documents": docs
+            })
+    
+    return results
+
+
+# ============== INVENTORY ==============
+def get_inventory_documents(date_from=None, date_to=None):
+    """Get list of inventory documents."""
+    docs = load_all("documents")
+    inventory_docs = [d for d in docs if d.get("doc_type") == "inventory"]
+    if date_from:
+        inventory_docs = [d for d in inventory_docs if d.get("doc_date", "") >= date_from]
+    if date_to:
+        inventory_docs = [d for d in inventory_docs if d.get("doc_date", "") <= date_to]
+    return sorted(inventory_docs, key=lambda x: x.get("doc_date", ""), reverse=True)
+
+
+def get_inventory_by_id(inv_id):
+    """Get inventory document by ID."""
+    return find_one("documents", lambda d: d.get("id") == inv_id and d.get("doc_type") == "inventory")
+
+
+def create_inventory(doc_data, user_id=None):
+    """Create new inventory document."""
+    doc_number = doc_data.get("doc_number", "")
+    if not doc_number:
+        doc_number = get_next_number("ИНВ")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "doc_type": "inventory",
+        "doc_number": doc_number,
+        "doc_date": doc_data.get("doc_date", now_iso()[:10]),
+        "order_number": doc_data.get("order_number", ""),
+        "order_date": doc_data.get("order_date", ""),
+        "chairman_id": doc_data.get("chairman_id", ""),
+        "committee_ids": doc_data.get("committee_ids", []),
+        "card_status_filter": doc_data.get("card_status_filter", ""),
+        "card_type_filter": doc_data.get("card_type_filter", ""),
+        "accounting_lines": doc_data.get("accounting_lines", []),
+        "actual_lines": doc_data.get("actual_lines", []),
+        "discrepancy_lines": doc_data.get("discrepancy_lines", []),
+        "status": "draft",
+        "created_at": now_iso(),
+        "created_by": user_id
+    }
+    result = insert("documents", doc)
+    if user_id:
+        log_action(user_id, "CREATE_INVENTORY", f"Created inventory {doc_number}")
+    return result
+
+
+def update_inventory(inv_id, updates, user_id=None):
+    """Update inventory document."""
+    inv = get_inventory_by_id(inv_id)
+    if not inv:
+        return False
+    updates["updated_at"] = now_iso()
+    updates["updated_by"] = user_id
+    result = update("documents", lambda d: d.get("id") == inv_id, updates)
+    if user_id:
+        log_action(user_id, "UPDATE_INVENTORY", f"Updated inventory {inv.get('doc_number')}")
+    return result
+
+
+def calculate_inventory_discrepancies(accounting_lines, actual_lines):
+    """Calculate discrepancies between accounting and actual lines."""
+    accounting_map = {line.get("card_number"): line for line in accounting_lines}
+    actual_map = {line.get("card_number"): line for line in actual_lines}
+    
+    discrepancies = []
+    all_cards = set(accounting_map.keys()) | set(actual_map.keys())
+    
+    for card_num in all_cards:
+        acc_line = accounting_map.get(card_num)
+        act_line = actual_map.get(card_num)
+        
+        discrepancy_type = ""
+        if acc_line and not act_line:
+            discrepancy_type = "missing"  # Карта есть в учете, но отсутствует фактически
+        elif not acc_line and act_line:
+            discrepancy_type = "surplus"  # Карта отсутствует в учете, но найдена фактически
+        elif acc_line and act_line:
+            # Check if other fields differ
+            if acc_line.get("card_type_id") != act_line.get("card_type_id") or \
+               acc_line.get("owner_name") != act_line.get("owner_name"):
+                discrepancy_type = "mismatch"  # Несоответствие данных
+        
+        if discrepancy_type:
+            discrepancies.append({
+                "card_number": card_num,
+                "discrepancy_type": discrepancy_type,
+                "accounting_card_type_id": acc_line.get("card_type_id") if acc_line else "",
+                "accounting_owner_name": acc_line.get("owner_name") if acc_line else "",
+                "actual_card_type_id": act_line.get("card_type_id") if act_line else "",
+                "actual_owner_name": act_line.get("owner_name") if act_line else ""
+            })
+    
+    return discrepancies
+
+
+def get_cards_for_inventory(status_filter=None, card_type_filter=None):
+    """Get cards for inventory based on filters."""
+    cards = load_all("cards")
+    # Exclude written off cards
+    cards = [c for c in cards if c.get("status") != "written_off"]
+    
+    if status_filter:
+        cards = [c for c in cards if c.get("status") == status_filter]
+    if card_type_filter:
+        cards = [c for c in cards if c.get("card_type_id") == card_type_filter]
+    
+    # Enrich with owner/applicant names
+    owners = {o["id"]: o for o in get_owners()}
+    applicants = {a["id"]: a for a in get_applicants()}
+    card_types = {ct["id"]: ct for ct in get_card_types()}
+    
+    result = []
+    for card in cards:
+        owner_id = card.get("owner_id", "")
+        applicant_id = card.get("applicant_id", "")
+        card_type_id = card.get("card_type_id", "")
+        
+        owner_name = ""
+        if owner_id and owner_id in owners:
+            owner_name = owners[owner_id].get("full_name", "")
+        elif applicant_id and applicant_id in applicants:
+            owner_name = applicants[applicant_id].get("full_name", "")
+        
+        ct_name = ""
+        if card_type_id and card_type_id in card_types:
+            ct_name = card_types[card_type_id].get("name", "")
+        
+        result.append({
+            "card_number": card.get("card_number", ""),
+            "card_type_id": card_type_id,
+            "card_type_name": ct_name,
+            "owner_name": owner_name,
+            "status": card.get("status", "")
+        })
+    
+    return result
+
+
+def create_docs_from_inventory(inv_id, user_id=None):
+    """Create adjustment documents from inventory results."""
+    inv = get_inventory_by_id(inv_id)
+    if not inv:
+        return False
+    
+    discrepancies = inv.get("discrepancy_lines", [])
+    if not discrepancies:
+        return True
+    
+    # Group discrepancies by type
+    missing_cards = [d for d in discrepancies if d.get("discrepancy_type") == "missing"]
+    surplus_cards = [d for d in discrepancies if d.get("discrepancy_type") == "surplus"]
+    
+    created_docs = []
+    
+    # Create writeoff document for missing cards
+    if missing_cards:
+        writeoff_lines = [{"card_number": d.get("card_number")} for d in missing_cards]
+        writeoff_doc = {
+            "doc_type": "writeoff",
+            "doc_date": inv.get("doc_date", now_iso()[:10]),
+            "lines": writeoff_lines,
+            "linked_inventory_id": inv_id
+        }
+        # Use existing document creation logic
+        from app.models import post_document
+        # Insert draft document
+        doc_number = get_next_number("СП")
+        writeoff = {
+            "id": str(uuid.uuid4()),
+            "doc_type": "writeoff",
+            "doc_number": doc_number,
+            "doc_date": writeoff_doc["doc_date"],
+            "lines": writeoff_lines,
+            "status": "draft",
+            "created_at": now_iso(),
+            "created_by": user_id,
+            "linked_inventory_id": inv_id
+        }
+        insert("documents", writeoff)
+        created_docs.append({"type": "writeoff", "id": writeoff["id"], "number": doc_number})
+    
+    # Create receipt document for surplus cards
+    if surplus_cards:
+        receipt_lines = [{"card_number": d.get("card_number"), "card_type_id": d.get("actual_card_type_id", "")} for d in surplus_cards]
+        doc_number = get_next_number("ПР")
+        receipt = {
+            "id": str(uuid.uuid4()),
+            "doc_type": "receipt",
+            "doc_number": doc_number,
+            "doc_date": inv.get("doc_date", now_iso()[:10]),
+            "lines": receipt_lines,
+            "status": "draft",
+            "created_at": now_iso(),
+            "created_by": user_id,
+            "linked_inventory_id": inv_id
+        }
+        insert("documents", receipt)
+        created_docs.append({"type": "receipt", "id": receipt["id"], "number": doc_number})
+    
+    # Mark inventory as completed
+    update("documents", lambda d: d.get("id") == inv_id, {"status": "completed"})
+    
+    if user_id:
+        log_action(user_id, "COMPLETE_INVENTORY", f"Completed inventory {inv.get('doc_number')}, created docs: {len(created_docs)}")
+    
+    return created_docs

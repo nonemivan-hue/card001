@@ -2,13 +2,23 @@
 Модуль для работы с устройствами считывания смарт-карт (PC/SC)
 Поддержка ридеров Advancer Card Systems ACR1281U и совместимых
 """
-from smartcard.System import readers
-from smartcard.Exceptions import NoCardException, CardConnectionException
-from smartcard.util import toHexString
+try:
+    from smartcard.System import readers
+    from smartcard.Exceptions import NoCardException, CardConnectionException
+    from smartcard.util import toHexString
+    SMARTCARD_AVAILABLE = True
+except ImportError:
+    SMARTCARD_AVAILABLE = False
+    readers = None
+    NoCardException = Exception
+    CardConnectionException = Exception
+    toHexString = lambda x: ''
 
 
 def get_available_readers():
     """Получить список доступных устройств считывания"""
+    if not SMARTCARD_AVAILABLE:
+        return []
     try:
         available = readers()
         return [str(r) for r in available]

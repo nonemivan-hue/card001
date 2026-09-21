@@ -29,7 +29,7 @@ from app.models import (
     get_mfcs, get_mfc_by_id,
     get_employees, get_employee_by_id, get_employee_by_login, check_permission,
     get_documents, get_document_by_id, post_document, delete_document,
-    get_cards_report_as_of, get_period_report, get_period_report_detail, get_edo_report, get_summary_report, get_stock_report, get_cards_as_of_report, get_all_cards_report, get_demand_analysis_report,
+    get_cards_report_as_of, get_period_report, get_period_report_detail, get_edo_report, get_summary_report, get_stock_report, get_cards_as_of_report, get_all_cards_report, get_demand_analysis_report, get_card_search_report,
     get_inventory_documents, get_inventory_by_id, create_inventory, update_inventory, calculate_inventory_discrepancies, get_cards_for_inventory, create_docs_from_inventory,
     CARD_STATUSES, DOCUMENT_TYPES, REPORT_STATUSES, log_action, now_iso
 )
@@ -1387,6 +1387,31 @@ def report_demand_analysis():
                                period_days=period_days)
     
     return render_template("reports/demand_analysis.html", report=None)
+
+
+# ============== CARD SEARCH REPORT ==============
+@app.route("/reports/card_search", methods=["GET", "POST"])
+@login_required
+def report_card_search():
+    """Report: Поиск карты по номеру или ФИО владельца."""
+    card_number = ""
+    owner_name = ""
+    report = None
+    
+    if request.method == "POST":
+        card_number = request.form.get("card_number", "").strip()
+        owner_name = request.form.get("owner_name", "").strip()
+        
+        if not card_number and not owner_name:
+            flash("Введите номер карты или ФИО владельца для поиска", "warning")
+            return redirect(url_for("report_card_search"))
+        
+        report = get_card_search_report(card_number, owner_name)
+    
+    return render_template("reports/card_search.html", 
+                           report=report, 
+                           card_number=card_number, 
+                           owner_name=owner_name)
 
 
 # ============== REPORTS EXPORT TO EXCEL ==============
