@@ -762,3 +762,95 @@ def get_demand_analysis_report(start_date, end_date, days_forecast):
     report.sort(key=lambda x: x["card_type_name"])
     
     return report, period_days
+
+
+# ============== CARD SEARCH REPORT ==============
+def get_card_search_report(card_number=None, owner_name=None):
+    """
+    Report: Поиск карты по номеру или ФИО владельца.
+    Возвращает информацию о картах, найденных по частичному совпадению номера карты
+    или частичному совпадению ФИО владельца.
+    
+    Для каждой найденной карты возвращается:
+    - Номер карты
+    - ФИО владельца (или заявителя)
+    - Вид карты
+    - Статус карты
+    - Документы, в которых фигурирует данная карта
+    """
+    cards = load_all("cards")
+    owners = {o["id"]: o for o in get_owners()}
+    applicants = {a["id"]: a for a in get_applicants()}
+    card_types = {ct["id"]: ct for ct in get_card_types()}
+    
+    # Build document index by card number
+    all_docs = load_all("documents")
+    card_docs_index = {}
+    for doc in all_docs:
+        for line in doc.get("lines", []):
+            card_num = line.get("card_number")
+            if card_num:
+                if card_num not in card_docs_index:
+                    card_docs_index[card_num] = []
+                card_docs_index[card_num].append({
+                    "doc_date": doc.get("doc_date", ""),
+                    "doc_number": doc.get("doc_number", ""),
+                    "doc_type": DOCUMENT_TYPES.get(doc.get("doc_type"), doc.get("doc_type")),
+                    "status": doc.get("status", "")
+                })
+    
+    # Sort history for each card by date descending
+    for card_num in card_docs_index:
+        card_docs_index[card_num].sort(key=lambda x: x.get("doc_date", ""), reverse=True)
+    
+    # Filter cards by search criteria
+    results = []
+    for card in cards:
+        card_num = card.get("card_number", "")
+        owner_id = card.get("owner_id", "")
+        applicant_id = card.get("applicant_id", "")
+        card_type_id = card.get("card_type_id", "")
+        status = card.get("status", "")
+        
+        # Get owner/applicant name
+        owner_name_val = ""
+        if owner_id and owner_id in owners:
+            owner_name_val = owners[owner_id].get("full_name", "")
+        elif applicant_id and applicant_id in applicants:
+            owner_name_val = applicants[applicant_id].get("full_name", "")
+        
+        # Check if card matches search criteria
+        match = False
+        if card_number and card_number.strip():
+            if card_number.strip().lower() in card_num.lower():
+                match = True
+        if owner_name and owner_name.strip():
+            if owner_name.strip().lower() in owner_name_val.lower():
+                match = True
+        
+        # If no search criteria provided, don't return anything
+        if not card_number and not owner_name:
+            continue
+            
+        if match:
+            # Get card type name
+            ct_name = ""
+            if card_type_id and card_type_id in card_types:
+                ct_name = card_types[card_type_id].get("name", "")
+            
+            # Get status description
+            status_desc = CARD_STATUSES.get(status, status)
+            
+            # Get documents for this card
+            docs = card_docs_index.get(card_num, [])
+            
+            results.append({
+                "card_number": card_num,
+                "owner_name": owner_name_val,
+                "card_type": ct_name,
+                "status": status_desc,
+                "status_code": status,
+                "documents": docs
+            })
+    
+    return results

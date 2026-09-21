@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Поиск карты{% endblock %}
+{% block page_title %}Отчет: Поиск карты по номеру или ФИО владельца{% endblock %}
+{% block content %}
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('report_card_search') }}">
+            <div class="row g-3">
+                <div class="col-md-5">
+                    <label for="card_number" class="form-label">Номер карты (часть номера)</label>
+                    <input type="text" class="form-control" id="card_number" name="card_number" 
+                           placeholder="Введите часть номера карты" 
+                           value="{{ card_number if card_number else '' }}">
+                </div>
+                <div class="col-md-5">
+                    <label for="owner_name" class="form-label">ФИО заявителя/владельца (часть ФИО)</label>
+                    <input type="text" class="form-control" id="owner_name" name="owner_name" 
+                           placeholder="Введите часть ФИО владельца" 
+                           value="{{ owner_name if owner_name else '' }}">
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">Найти карту</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if report is not none %}
+<div class="card">
+    <div class="card-body">
+        {% if report|length == 0 %}
+        <div class="alert alert-info" role="alert">
+            Карты не найдены. Попробуйте изменить критерии поиска.
+        </div>
+        {% else %}
+        <h6 class="card-subtitle mb-3 text-muted">
+            Найдено карт: {{ report|length }}
+        </h6>
+        <div class="table-responsive">
+            <table class="table table-bordered table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th class="align-middle">№ п/п</th>
+                        <th class="align-middle">Номер карты</th>
+                        <th class="align-middle">ФИО владельца/заявителя</th>
+                        <th class="align-middle">Вид карты</th>
+                        <th class="align-middle">Статус</th>
+                        <th class="align-middle">Документы</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in report %}
+                    <tr>
+                        <td class="align-middle">{{ loop.index }}</td>
+                        <td class="align-middle font-monospace">{{ row.card_number }}</td>
+                        <td class="align-middle">{{ row.owner_name if row.owner_name else '—' }}</td>
+                        <td class="align-middle">{{ row.card_type if row.card_type else '—' }}</td>
+                        <td class="align-middle">
+                            <span class="badge {% if row.status_code == 'issued' %}bg-success{% elif row.status_code == 'ready_to_issue' %}bg-info{% elif row.status_code == 'ready_to_print' %}bg-secondary{% elif row.status_code == 'defect' %}bg-danger{% elif row.status_code == 'transferred_region' %}bg-warning{% else %}bg-light text-dark{% endif %}">
+                                {{ row.status }}
+                            </span>
+                        </td>
+                        <td class="align-middle">
+                            {% if row.documents and row.documents|length > 0 %}
+                            <button class="btn btn-sm btn-outline-primary" type="button" 
+                                    data-bs-toggle="collapse" 
+                                    data-bs-target="#docs_{{ loop.index }}"
+                                    aria-expanded="false"
+                                    aria-controls="docs_{{ loop.index }}">
+                                Показать документы ({{ row.documents|length }})
+                            </button>
+                            <div class="collapse mt-2" id="docs_{{ loop.index }}">
+                                <div class="card card-body bg-light">
+                                    <ul class="list-unstyled mb-0">
+                                        {% for doc in row.documents %}
+                                        <li class="mb-1">
+                                            <small>
+                                                <strong>{{ doc.doc_date }}</strong> — 
+                                                {{ doc.doc_number }} ({{ doc.doc_type }})
+                                                {% if doc.status == 'posted' %}
+                                                <span class="badge bg-success">Проведен</span>
+                                                {% else %}
+                                                <span class="badge bg-secondary">Черновик</span>
+                                                {% endif %}
+                                            </small>
+                                        </li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                            </div>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
